@@ -1,0 +1,74 @@
+// ===== フェードイン（キャラ）=====
+window.onload = ()=>{
+  document.getElementById("char").classList.add("fadeIn");
+};
+
+// ===== メニュー制御（変更）=====
+menuBtn.onclick=()=>{
+  menu.classList.toggle("show");
+};
+
+// ===== フラッシュ強化 =====
+function flash(){
+  const f=document.getElementById("flash");
+  f.style.opacity=1;
+  setTimeout(()=>{f.style.opacity=0;},150);
+}
+
+// ===== 撮影後（プレビュー演出変更）=====
+document.getElementById("captureBtn").onclick=()=>{
+
+  flash();
+
+  setTimeout(()=>{
+    document.getElementById("shutterSound").play();
+  },100);
+
+  let canvas=document.getElementById("canvas");
+  let ctx=canvas.getContext("2d");
+
+  canvas.width=video.videoWidth;
+  canvas.height=video.videoHeight;
+
+  ctx.filter=filters[currentFilter];
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
+  let rect=char.getBoundingClientRect();
+  let vRect=video.getBoundingClientRect();
+
+  let sx=canvas.width/vRect.width;
+  let sy=canvas.height/vRect.height;
+
+  let x=(rect.left-vRect.left)*sx;
+  let y=(rect.top-vRect.top)*sy;
+  let w=rect.width*sx;
+  let h=rect.height*sy;
+
+  ctx.drawImage(char,x,y,w,h);
+
+  let data=canvas.toDataURL("image/png");
+
+  document.getElementById("previewImage").src=data;
+
+  let preview=document.getElementById("preview");
+  preview.style.display="flex";
+
+  setTimeout(()=>{
+    preview.classList.add("show");
+  },10);
+
+  let link=document.createElement("a");
+  link.href=data;
+  link.download="photo.png";
+  link.click();
+};
+
+// ===== プレビュー閉じる（アニメ対応）=====
+function closePreview(){
+  let preview=document.getElementById("preview");
+  preview.classList.remove("show");
+
+  setTimeout(()=>{
+    preview.style.display="none";
+  },300);
+}
