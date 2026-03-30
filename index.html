@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+<style>
+html,body{
+  margin:0;padding:0;overflow:hidden;background:black;
+}
+
+#cameraVideo{
+  position:fixed;
+  width:100vw;height:100vh;
+  object-fit:cover;
+}
+
+#char{
+  position:fixed;
+  left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  width:40%;
+  touch-action:none;
+  filter: drop-shadow(0px 15px 15px rgba(0,0,0,0.25));
+}
+
+/* 三本線 */
+#menuBtn{
+  position:fixed;
+  top:15px;left:15px;
+  z-index:20;
+  font-size:24px;
+  display:none;
+  background:rgba(0,0,0,0.5);
+  color:white;
+  border:none;
+  border-radius:12px;
+  padding:8px 12px;
+}
+
+/* メニュー */
+#menu{
+  position:fixed;
+  top:60px;left:15px;
+  display:flex;
+  flex-direction:column;
+  z-index:20;
+}
+
+/* ボタン */
+.menuBtn{
+  margin:5px 0;
+  padding:10px 14px;
+  border:none;
+  border-radius:20px;
+  background:rgba(255,255,255,0.7);
+  backdrop-filter: blur(10px);
+}
+
+/* カメラボタン */
+#captureBtn{
+  position:fixed;
+  bottom:20px;
+  right:20px;
+  width:80px;
+  height:80px;
+  border:none;
+  background:transparent;
+}
+
+#captureBtn:active{
+  transform: scale(0.75);
+}
+
+#captureBtn img{
+  width:100%;
+}
+
+/* プレビュー */
+#preview{
+  position:fixed;
+  width:100%;height:100%;
+  background:black;
+  display:none;
+  justify-content:center;
+  align-items:center;
+  flex-direction:column;
+  z-index:30;
+}
+
+#preview img{
+  width:90%;
+}
+
+/* ===== ローディング ===== */
+#loading{
+  position:fixed;
+  width:100%;
+  height:100%;
+  background:black;
+  z-index:50;
+  display:none;
+}
+
+#loading::before{
+  content:"";
+  position:absolute;
+  top:-100%;
+  width:100%;
+  height:100%;
+  background:white;
+  opacity:0.2;
+}
+
+.loadingActive::before{
+  animation: lightDown 1.2s ease forwards;
+}
+
+@keyframes lightDown{
+  0%{ top:-100%; opacity:0; }
+  50%{ opacity:0.3; }
+  100%{ top:100%; opacity:0; }
+}
+
+/* フラッシュ */
+#flash{
+  position:fixed;
+  width:100%;height:100%;
+  background:white;
+  opacity:0;
+  pointer-events:none;
+  z-index:40;
+}
+
+/* 横画面 */
+@media screen and (orientation: landscape){
+  #char{ width:25%; }
+
+  #captureBtn{
+    width:60px;height:60px;
+  }
+
+  #menu{
+    flex-direction:row;
+    top:15px;
+    left:70px;
+  }
+
+  .menuBtn{
+    margin:0 5px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<video id="cameraVideo" autoplay playsinline></video>
+<img id="char" src="soctest.png">
+
+<button id="menuBtn">☰</button>
+
+<div id="menu">
+  <button class="menuBtn" onclick="startCamera()">カメラ</button>
+  <button class="menuBtn" onclick="switchCamera()">切替</button>
+  <button class="menuBtn" onclick="changeFilter()">フィルター</button>
+</div>
+
+<button id="captureBtn">
+  <img src="camera.png">
+</button>
+
+<div id="preview">
+  <img id="previewImage">
+  <button class="menuBtn" onclick="closePreview()">閉じる</button>
+</div>
+
+<div id="loading"></div>
+<div id="flash"></div>
+
+<canvas id="canvas" style="display:none;"></canvas>
+<audio id="shutterSound" src="shutter.mp3"></audio>
+
+<script>
+let video=document.getElementById("cameraVideo");
+let stream;
+let facing="environment";
+
+/* カメラ起動 */
+function startCamera(){
+  const loading=document.getElementById("loading");
+
+  loading.style.display="block";
+  loading.classList.add("loadingActive");
+
+  navigator.mediaDevices.getUserMedia({
+    video:{facingMode:facing}
+  })
+  .then(s=>{
+    stream=s;
+    video.srcObject=s;
+
+    video.onloadedmetadata = ()=>{
+      loading.style.display="none";
+      loading.classList.remove("loadingActive");
+    };
+
+    document.getElementById("menu").style.display="none";
+    document.getElementById("menuBtn").style.display="block";
+  })
+  .catch(()=>{
+    loading.style.display="none";
+    alert("カメラ許可が必要です（HTTPS必須）");
+  });
+
+  setTimeout(()=>{
+    loading.style.display="none";
+  },3000);
+}
+
+/* カメラ切替 */
+function switchCamera(){
+  facing=(facing==="environment")?"user":"environment";
+  if(stream){stream.getTracks().forEach(t=>t.stop());}
+  startCamera();
+}
+
+/* メニュー */
+let menu=document.getElementById("menu");
+let menuBtn=document.getElementById("menuBtn");
+
+menuBtn.onclick=()=>{
+  menu.style.display=(menu.style.display==="none")?"flex":"none";
+};
+
+/* フィルター */
+const filters=[
+  "none",
+  "grayscale(1)",
+  "sepia(1)",
+  "contrast(1.3) saturate(1.4)",
+  "brightness(1.2)"
+];
+let currentFilter=0;
+
+function changeFilter(){
+  currentFilter=(currentFilter+1)%filters.length;
+  video.style.filter=filters[currentFilter];
+}
+
+/* サノマル操作 */
+let char=document.getElementById("char");
+
+let offsetX=0,offsetY=0,scale=1,rotation=0;
+let startX,startY,isDragging=false;
+let initialDistance=0,initialAngle=0;
+
+char.addEventListener("touchstart",e=>{
+  if(e.touches.length===1){
+    isDragging=true;
+    startX=e.touches[0].clientX-offsetX;
+    startY=e.touches[0].clientY-offsetY;
+  }
+  if(e.touches.length===2){
+    initialDistance=getDistance(e.touches);
+    initialAngle=getAngle(e.touches);
+  }
+});
+
+char.addEventListener("touchmove",e=>{
+  e.preventDefault();
+
+  if(e.touches.length===1 && isDragging){
+    offsetX=e.touches[0].clientX-startX;
+    offsetY=e.touches[0].clientY-startY;
+  }
+
+  if(e.touches.length===2){
+    let d=getDistance(e.touches);
+    let a=getAngle(e.touches);
+
+    scale*=d/initialDistance;
+    rotation+=a-initialAngle;
+
+    initialDistance=d;
+    initialAngle=a;
+  }
+
+  char.style.transform=
+    `translate(${offsetX}px,${offsetY}px)
+     scale(${scale})
+     rotate(${rotation}deg)`;
+});
+
+char.addEventListener("touchend",()=>isDragging=false);
+
+function getDistance(t){
+  let dx=t[0].clientX-t[1].clientX;
+  let dy=t[0].clientY-t[1].clientY;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+
+function getAngle(t){
+  let dx=t[1].clientX-t[0].clientX;
+  let dy=t[1].clientY-t[0].clientY;
+  return Math.atan2(dy,dx)*180/Math.PI;
+}
+
+/* フラッシュ */
+function flash(){
+  const f=document.getElementById("flash");
+  f.style.opacity=1;
+  setTimeout(()=>{f.style.opacity=0;},100);
+}
+
+/* 撮影 */
+document.getElementById("captureBtn").onclick=()=>{
+  let sound=document.getElementById("shutterSound");
+  sound.currentTime=0;
+  sound.play().catch(()=>{});
+
+  flash();
+
+  let canvas=document.getElementById("canvas");
+  let ctx=canvas.getContext("2d");
+
+  canvas.width=video.videoWidth;
+  canvas.height=video.videoHeight;
+
+  ctx.filter=filters[currentFilter];
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
+  let rect=char.getBoundingClientRect();
+  let vRect=video.getBoundingClientRect();
+
+  let sx=canvas.width/vRect.width;
+  let sy=canvas.height/vRect.height;
+
+  let x=(rect.left-vRect.left)*sx;
+  let y=(rect.top-vRect.top)*sy;
+  let w=rect.width*sx;
+  let h=rect.height*sy;
+
+  ctx.filter="none";
+
+  // ★ ヘンコウ
+  ctx.save();
+  ctx.translate(x + w/2, y + h/2);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.scale(scale, scale);
+  ctx.drawImage(char, -w/2, -h/2, w, h);
+  ctx.restore();
+
+  let data=canvas.toDataURL("image/png");
+
+  document.getElementById("previewImage").src=data;
+  document.getElementById("preview").style.display="flex";
+
+  let link=document.createElement("a");
+  link.href=data;
+  link.download="photo.png";
+  link.click();
+};
+
+/* プレビュー */
+function closePreview(){
+  document.getElementById("preview").style.display="none";
+}
+</script>
+
+</body>
+</html>
