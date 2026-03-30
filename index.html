@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+<style>
+html,body{margin:0;padding:0;overflow:hidden;background:black;}
+#cameraVideo{position:fixed;width:100vw;height:100vh;object-fit:cover;}
+#char{
+  position:fixed;left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  width:40%;touch-action:none;
+}
+#captureBtn{position:fixed;bottom:20px;right:20px;width:80px;height:80px;border:none;background:transparent;}
+#captureBtn img{width:100%;}
+#preview{position:fixed;width:100%;height:100%;background:black;display:none;justify-content:center;align-items:center;flex-direction:column;}
+#preview img{width:90%;}
+</style>
+</head>
+
+<body>
+
+<video id="cameraVideo" autoplay playsinline muted></video>
+<img id="char" src="soctest.png">
+
+<button id="captureBtn">
+  <img src="camera.png">
+</button>
+
+<div id="preview">
+  <img id="previewImage">
+</div>
+
+<canvas id="canvas" style="display:none;"></canvas>
+<audio id="shutterSound" src="shutter.mp3" preload="auto"></audio>
+
+<script>
+let video=document.getElementById("cameraVideo");
+let char=document.getElementById("char");
+
+/* カメラ */
+navigator.mediaDevices.getUserMedia({
+  video:{facingMode:"environment"},
+  audio:false
+})
+.then(s=>video.srcObject=s)
+.catch(()=>alert("カメラ許可が必要です"));
+
+/* ===== キャラ操作（そのまま） ===== */
+let offsetX=0,offsetY=0,scale=1,rotation=0;
+let startX,startY,isDragging=false;
+let initialDistance=1,initialAngle=0;
+
+char.addEventListener("touchstart",e=>{
+  if(e.touches.length===1){
+    isDragging=true;
+    startX=e.touches[0].clientX-offsetX;
+    startY=e.touches[0].clientY-offsetY;
+  }
+  if(e.touches.length===2){
+    initialDistance=getDistance(e.touches)||1;
+    initialAngle=getAngle(e.touches)||0;
+  }
+});
+
+char.addEventListener("touchmove",e=>{
+  e.preventDefault();
+
+  if(e.touches.length===1 && isDragging){
+    offsetX=e.touches[0].clientX-startX;
+    offsetY=e.touches[0].clientY-startY;
+  }
+
+  if(e.touches.length===2){
+    let d=getDistance(e.touches);
+    let a=getAngle(e.touches);
+
+    let factor=d/initialDistance;
+    scale=scale*factor;
+    scale=Math.max(0.3,Math.min(scale,3));
+
+    rotation+=a-initialAngle;
+    initialDistance=d;
+    initialAngle=a;
+  }
+
+  char.style.transform=
+  `translate(${offsetX}px,${offsetY}px)
+   scale(${scale})
+   rotate(${rotation}deg)`;
+});
+
+char.addEventListener("touchend",()=>isDragging=false);
+
+function getDistance(t){
+  let dx=t[0].clientX-t[1].clientX;
+  let dy=t[0].clientY-t[1].clientY;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+function getAngle(t){
+  let dx=t[1].clientX-t[0].clientX;
+  let dy=t[1].clientY-t[0].clientY;
+  return Math.atan2(dy,dx)*180/Math.PI;
+}
+
+/* ===== 音解放 ===== */
+let unlocked=false;
+document.body.addEventListener("touchstart",()=>{
+  if(unlocked) return;
+  let s=document.getElementById("shutterSound");
+  s.play().then(()=>{
+    s.pause();
+    s.currentTime=0;
+    unlocked=true;
+  }).catch(()=>{});
+},{once:true});
+
+/* ===== 撮影（★ここが修正本体） ===== */
+function capture(){
+
+  // 音
+  let s=document.getElementById("shutterSound");
+  s.currentTime=0;
+  s.play().catch(()=>{});
+
+  // 振動
+  if(navigator.vibrate){
+    navigator.vibrate([50]);
+  }
+
+  let canvas=document.getElementById("canvas");
+  let ctx=canvas.getContext("2d");
+
+  let vw=video.videoWidth;
+  let vh=video.videoHeight;
+
+  canvas.width=vw;
+  canvas.height=vh;
+
+  // ===== cover完全一致 =====
+  let vRect=video.getBoundingClientRect();
+  let videoRatio=vw/vh;
+  let displayRatio=vRect.width/vRect.height;
+
+  let sx=0,sy=0,sw=vw,sh=vh;
+
+  if(videoRatio > displayRatio){
+    sw = vh * displayRatio;
+    sx = (vw - sw)/2;
+  }else{
+    sh = vw / displayRatio;
+    sy = (vh - sh)/2;
+  }
+
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, vw, vh);
+
+  // ===== char座標 =====
+  let rect=char.getBoundingClientRect();
+
+  let x = (rect.left - vRect.left) / vRect.width * vw;
+  let y = (rect.top - vRect.top) / vRect.height * vh;
+  let w = rect.width / vRect.width * vw;
+  let h = rect.height / vRect.height * vh;
+
+  ctx.save();
+  ctx.translate(x + w/2, y + h/2);
+  ctx.rotate(rotation * Math.PI / 180);
+  ctx.drawImage(char, -w/2, -h/2, w, h);
+  ctx.restore();
+
+  let data=canvas.toDataURL("image/png");
+  document.getElementById("previewImage").src=data;
+  document.getElementById("preview").style.display="flex";
+}
+
+/* ★ click → touchstart に変更 */
+document.getElementById("captureBtn")
+.addEventListener("touchstart",capture);
+</script>
+
+</body>
+</html>
