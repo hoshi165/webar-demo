@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+<style>
+html,body{
+  margin:0;padding:0;overflow:hidden;background:black;
+}
+
+/* カメラ */
+#cameraVideo{
+  position:fixed;
+  width:100vw;height:100vh;
+  object-fit:cover;
+}
+
+/* キャラ */
+#char{
+  position:fixed;
+  left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  width:40%;
+  touch-action:none;
+  filter: drop-shadow(0px 15px 15px rgba(0,0,0,0.35));
+}
+
+/* ===== 下部UI ===== */
+#bottomBar{
+  position:fixed;
+  bottom:20px;
+  width:100%;
+  display:flex;
+  justify-content:space-around;
+  z-index:20;
+}
+
+/* 下ボタン */
+.ctrlBtn{
+  width:84px; /* 30%縮小 */
+  padding:10px;
+  border:none;
+  border-radius:20px;
+  background:rgba(255,255,255,0.7);
+  backdrop-filter: blur(10px);
+}
+
+/* フィルターパネル */
+#filterPanel{
+  position:fixed;
+  bottom:-120px;
+  width:100%;
+  display:flex;
+  justify-content:space-around;
+  z-index:20;
+  transition:0.3s;
+}
+
+#filterPanel.active{
+  bottom:90px;
+}
+
+/* フィルターボタン */
+.filterBtn{
+  width:80px;
+  padding:8px;
+  border:none;
+  border-radius:16px;
+  background:#888;
+  color:white;
+}
+
+/* 選択状態 */
+.filterBtn.active{
+  background:black;
+  color:white;
+}
+
+/* カメラボタン */
+#captureBtn{
+  position:fixed;
+  bottom:20px;
+  right:20px;
+  width:80px;
+  height:80px;
+  border:none;
+  background:transparent;
+  z-index:20;
+}
+
+#captureBtn:active{
+  transform: scale(0.75);
+}
+
+#captureBtn img{
+  width:100%;
+  height:100%;
+}
+
+/* プレビュー */
+#preview{
+  position:fixed;
+  top:0;left:0;
+  width:100%;height:100%;
+  background:black;
+  display:none;
+  justify-content:center;
+  align-items:center;
+  flex-direction:column;
+  z-index:30;
+}
+
+#preview img{
+  width:90%;
+}
+</style>
+</head>
+
+<body>
+
+<video id="cameraVideo" autoplay playsinline></video>
+<img id="char" src="soctest.png">
+
+<!-- 下UI -->
+<div id="bottomBar">
+  <button class="ctrlBtn" onclick="switchCamera()">カメラ切替</button>
+  <button class="ctrlBtn" onclick="toggleFilter()">フィルター</button>
+</div>
+
+<!-- フィルター -->
+<div id="filterPanel">
+  <button class="filterBtn" onclick="setFilter(0,this)">なし</button>
+  <button class="filterBtn" onclick="setFilter(1,this)">白黒</button>
+  <button class="filterBtn" onclick="setFilter(2,this)">セピア</button>
+  <button class="filterBtn" onclick="setFilter(3,this)">鮮やか</button>
+</div>
+
+<!-- 撮影 -->
+<button id="captureBtn">
+  <img src="camera.png">
+</button>
+
+<div id="preview">
+  <img id="previewImage">
+  <button onclick="closePreview()">閉じる</button>
+</div>
+
+<canvas id="canvas" style="display:none;"></canvas>
+
+<script>
+let video=document.getElementById("cameraVideo");
+let currentStream=null;
+let usingBackCamera=true;
+
+/* 初回アウトカメラ */
+async function startCamera(){
+  if(currentStream){
+    currentStream.getTracks().forEach(t=>t.stop());
+  }
+
+  try{
+    const devices = await navigator.mediaDevices.enumerateDevices();
+
+    const backCamera = devices.find(d =>
+      d.kind==="videoinput" &&
+      (d.label.toLowerCase().includes("back") ||
+       d.label.toLowerCase().includes("rear"))
+    );
+
+    const constraints = backCamera
+      ? { video: { deviceId: backCamera.deviceId } }
+      : { video: { facingMode: "environment" } };
+
+    currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = currentStream;
+
+  }catch(e){
+    alert("カメラ起動失敗");
+  }
+}
+
+startCamera();
+
+/* 切替 */
+async function switchCamera(){
+  usingBackCamera=!usingBackCamera;
+
+  if(currentStream){
+    currentStream.getTracks().forEach(t=>t.stop());
+  }
+
+  const constraints={
+    video:{facingMode:usingBackCamera?"environment":"user"}
+  };
+
+  currentStream=await navigator.mediaDevices.getUserMedia(constraints);
+  video.srcObject=currentStream;
+}
+
+/* フィルター */
+const filters=[
+  "none",
+  "grayscale(1)",
+  "sepia(1)",
+  "contrast(1.3) saturate(1.4)"
+];
+
+function toggleFilter(){
+  document.getElementById("filterPanel").classList.toggle("active");
+}
+
+function setFilter(i,el){
+  video.style.filter=filters[i];
+
+  document.querySelectorAll(".filterBtn").forEach(b=>b.classList.remove("active"));
+  el.classList.add("active");
+}
+
+/* キャラ操作 */
+let char=document.getElementById("char");
+
+let posX=0,posY=0,scale=1;
+let startX,startY;
+let dragging=false;
+let startDist=0;
+
+char.addEventListener("touchstart",e=>{
+  if(e.touches.length===1){
+    dragging=true;
+    startX=e.touches[0].clientX-posX;
+    startY=e.touches[0].clientY-posY;
+  }
+  if(e.touches.length===2){
+    startDist=getDist(e.touches);
+  }
+});
+
+char.addEventListener("touchmove",e=>{
+  e.preventDefault();
+
+  if(e.touches.length===1 && dragging){
+    posX=e.touches[0].clientX-startX;
+    posY=e.touches[0].clientY-startY;
+  }
+
+  if(e.touches.length===2){
+    let d=getDist(e.touches);
+    scale*=d/startDist;
+    startDist=d;
+  }
+
+  char.style.transform=`translate(${posX}px,${posY}px) scale(${scale})`;
+});
+
+char.addEventListener("touchend",()=>dragging=false);
+
+function getDist(t){
+  let dx=t[0].clientX-t[1].clientX;
+  let dy=t[0].clientY-t[1].clientY;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+</script>
+
+</body>
+</html>
