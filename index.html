@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<style>
+  body { margin:0; overflow:hidden; background:#000; font-family:sans-serif; }
+  video { position: absolute; top:0; left:0; width:100vw; height:100vh; object-fit: cover; z-index: 1; }
+  #glCanvas { position:absolute; top:0; left:0; width:100vw; height:100vh; object-fit:cover; z-index: 2; pointer-events: none; }
+  
+  #charBox { 
+    position:absolute; width:150px; height:150px;
+    top:50%; left:50%; transform:translate(-50%,-50%); 
+    z-index: 10; touch-action:none; border: none;
+  }
+
+  #bottom-bar { position:fixed; bottom:30px; width:100%; display:flex; justify-content:space-around; align-items:center; z-index:1000; }
+  .control-btn { width:72px; height:48px; border-radius:8px; background:rgba(0,0,0,0.6); color:white; border:none; backdrop-filter:blur(10px); }
+  #captureBtn { width:70px; height:70px; cursor: pointer; }
+  .panel { position:fixed; bottom:-180px; width:100%; background:rgba(255,255,255,0.95); display:flex; justify-content:space-around; padding:25px 0; transition:0.3s; z-index: 1100; border-radius: 20px 20px 0 0; }
+  .panel.active { bottom:130px; }
+  .panel button { width:90px; height:45px; border-radius:10px; border:none; background: #eee; color: #000; font-weight: bold; }
+  .panel button.active { background:#ccc; }
+  #preview { position:fixed; inset:0; display:none; flex-direction:column; background:#000; z-index:2000; align-items:center; justify-content:center; }
+  #result { width:100%; height:80%; object-fit: contain; }
+</style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline muted crossorigin="anonymous"></video>
+<canvas id="glCanvas"></canvas>
+<div id="charBox"></div>
+
+<div id="bottom-bar">
+  <button class="control-btn" onclick="switchCamera()">切替</button>
+  <button class="control-btn" onclick="togglePanel('charPanel')">キャラ</button>
+  <img id="captureBtn" src="camera.png" onclick="captureImage()">
+  <button class="control-btn" onclick="togglePanel('filterPanel')">フィルタ</button>
+  <button class="control-btn" onclick="resetChar()">リセット</button>
+</div>
+
+<div id="filterPanel" class="panel">
+  <button data-filter="none" class="active">Normal</button>
+  <button data-filter="retro">Retro</button>
+  <button data-filter="vivid">Vivid</button>
+  <button data-filter="cinema">Cinema</button>
+</div>
+
+<div id="charPanel" class="panel">
+  <button onclick="selectChar(1)">soctest1</button>
+  <button onclick="selectChar(2)">soctest2</button>
+</div>
+
+<div id="preview">
+  <img id="result">
+  <div style="margin-top:20px;">
+    <button class="control-btn" onclick="saveImage()">保存</button>
+    <button class="control-btn" onclick="closePreview()">戻る</button>
+  </div>
+</div>
+
+<script>
+const video = document.getElementById("video");
+const glCanvas = document.getElementById("glCanvas");
+const charBox = document.getElementById("charBox");
+const gl = glCanvas.getContext("webgl", { preserveDrawingBuffer: true, alpha: true });
+
+let currentFilter = "none";
+let startTime = Date.now();
+let facingMode = "environment";
+let charImg = new Image();
+charImg.crossOrigin = "anonymous";
+charImg.src = "soctest1.png";
+
+const vs = `attribute vec2 p; varying vec2 v; void main(){ v=p*0.5+0.5; gl_Position=vec4(p,0,1); }`;
+const fs = `
+  precision mediump float;
+  varying vec2 v;
+  uniform sampler2D uV; uniform sampler2D uC;
+  uniform int uM; uniform float uT; uniform vec4 uR;
+  void main() {
+    vec4 b = texture2D(uV, vec2(v.x, 1.0 - v.y));
+    if(uM == 1) b.rgb = mix(b.rgb, vec3(dot(b.rgb, vec3(0.299, 0.587, 0.114))) * vec3(1.2, 1.0, 0.8), 0.6);
+    else if(uM == 2) b.rgb = clamp((b.rgb - 0.5) * 1.5 + 0.5, 0.0, 1.0);
+    else if(uM == 3) b.rgb = pow(b.rgb * vec3(0.8, 0.9, 1.0), vec3(1.3));
+    vec4 res = b;
+    if(v.x >= uR.x && v.x <= uR.x + uR.z && v.y >= uR.y && v.y <= uR.y + uR.w) {
+      vec2 cuv = (v - uR.xy) / uR.zw;
+      float pulse = sin(uT * 2.5) * 0.02;
+      vec2 duv = cuv + (cuv - 0.5) * pulse;
+      vec4 c = texture2D(uC, vec2(duv.x, 1.0 - duv.y));
+      res.rgb = mix(b.rgb, c.rgb, c.a);
+    }
+    gl_FragColor = res;
+  }
+`;
+
+const prg = gl.createProgram();
+const sh = (t, s) => { const r = gl.createShader(t); gl.shaderSource(r, s); gl.compileShader(r); return r; };
+gl.attachShader(prg, sh(gl.VERTEX_SHADER, vs));
+gl.attachShader(prg, sh(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(prg); gl.useProgram(prg);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+const pL = gl.getAttribLocation(prg, "p");
+gl.enableVertexAttribArray(pL);
+gl.vertexAttribPointer(pL, 2, gl.FLOAT, false, 0, 0);
+
+const locV = gl.getUniformLocation(prg, "uV");
+const locC = gl.getUniformLocation(prg, "uC");
+const locM = gl.getUniformLocation(prg, "uM");
+const locT = gl.getUniformLocation(prg, "uT");
+const locR = gl.getUniformLocation(prg, "uR");
+
+const texV = gl.createTexture();
+const texC = gl.createTexture();
+[texV, texC].forEach(t => {
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+});
+
+async function start() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode, width: 1280, height: 720 } });
+    video.srcObject = s;
+    video.onloadedmetadata = () => {
+      video.play();
+      setTimeout(() => {
+        glCanvas.width = video.videoWidth;
+        glCanvas.height = video.videoHeight;
+        requestAnimationFrame(loop);
+      }, 500);
+    };
+  } catch (e) { alert("Camera Error"); }
+}
+
+function loop() {
+  if (video.readyState >= 2) {
+    gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texV);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    gl.uniform1i(locV, 0);
+
+    if(charImg.complete) {
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texC);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, charImg);
+      gl.uniform1i(locC, 1);
+    }
+
+    gl.uniform1f(locT, (Date.now() - startTime) / 1000.0);
+    let m = (currentFilter==="retro"?1:currentFilter==="vivid"?2:currentFilter==="cinema"?3:0);
+    gl.uniform1i(locM, m);
+
+    // 【重要】潰れ補正ロジック
+    // 画面(CSS)のサイズと、実際の解像度(Canvas)の比率を計算して座標を一致させる
+    const rect = charBox.getBoundingClientRect();
+    const winW = window.innerWidth, winH = window.innerHeight;
+    const canW = glCanvas.width, canH = glCanvas.height;
+    
+    // 画面のアスペクト比とビデオ解像度のアスペクト比の差を考慮
+    const scaleX = rect.left / winW;
+    const scaleY = 1.0 - (rect.top + rect.height) / winH;
+    const scaleW = rect.width / winW;
+    const scaleH = rect.height / winH;
+
+    gl.uniform4f(locR, scaleX, scaleY, scaleW, scaleH);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  requestAnimationFrame(loop);
+}
+
+function captureImage() {
+  document.getElementById("result").src = glCanvas.toDataURL("image/png");
+  document.getElementById("preview").style.display = "flex";
+}
+
+function togglePanel(id) {
+  const p = document.getElementById(id);
+  const active = p.classList.contains("active");
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+  if(!active) p.classList.add("active");
+}
+
+function selectChar(n){ 
+  charImg = new Image(); charImg.crossOrigin = "anonymous";
+  charImg.src = n===1?"soctest1.png":"soctest2.png"; 
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+}
+
+function switchCamera(){ facingMode=(facingMode==="user"?"environment":"user"); start(); }
+function closePreview(){ document.getElementById("preview").style.display="none"; }
+function saveImage(){ const a=document.createElement("a"); a.href=document.getElementById("result").src; a.download="photo.png"; a.click(); }
+
+// Interaction
+let oX=window.innerWidth/2, oY=window.innerHeight/2, cS=1, iD=false, iP=false, sX, sY, sD, sS;
+charBox.addEventListener("touchstart", e => {
+  if(e.touches.length===1){ iD=true; sX=e.touches[0].clientX-oX; sY=e.touches[0].clientY-oY; }
+  if(e.touches.length===2){ iP=true; sD=Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY); sS=cS; }
+  e.preventDefault();
+}, {passive: false});
+
+document.addEventListener("touchmove", e => {
+  if(iD && e.touches.length===1){
+    oX=e.touches[0].clientX-sX; oY=e.touches[0].clientY-sY;
+    charBox.style.left=oX+"px"; charBox.style.top=oY+"px";
+  }
+  if(iP && e.touches.length===2){
+    let d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    cS = sS * (d / sD);
+    charBox.style.width = (150 * cS) + "px";
+    charBox.style.height = (150 * cS) + "px";
+  }
+}, {passive: false});
+
+document.addEventListener("touchend", () => { iD=false; iP=false; });
+function resetChar(){ oX=window.innerWidth/2; oY=window.innerHeight/2; cS=1; charBox.style.left="50%"; charBox.style.top="50%"; charBox.style.width="150px"; charBox.style.height="150px"; }
+
+document.querySelectorAll("#filterPanel button").forEach(b => { 
+  b.onclick = () => { 
+    currentFilter = b.dataset.filter; 
+    document.querySelectorAll("#filterPanel button").forEach(x => x.classList.remove("active")); 
+    b.classList.add("active"); 
+  }; 
+});
+
+start();
+</script>
+</body>
+</html>
